@@ -43,3 +43,22 @@ jobs:
       - run: uv sync --locked
       - run: uv run python -m churn.data
       - run: uv run python -m churn.train
+      - uses: actions/upload-artifact@v7
+        with:
+          name: model
+          path: models/model.joblib
+          if-no-files-found: error
+          retention-days: 7
+
+  image:
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: model
+          path: models
+      - run: docker build -t trader-churn .
+      - run: scripts/smoke_test_image.sh trader-churn models
