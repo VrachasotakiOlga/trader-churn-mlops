@@ -77,9 +77,18 @@ jobs:
           version: v4.3.1
       - run: helm lint charts/trader-churn
       - run: helm lint charts/trader-churn --values charts/trader-churn/values-minikube.yaml
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.16.3
+          terraform_wrapper: false
+      - run: terraform -chdir=infra fmt -check
       - uses: helm/kind-action@v1.15.2
         with:
           cluster_name: ci
+      - name: Create the model store on the MiniStack emulator
+        run: |
+          store_ip="$(scripts/setup_model_store.sh kind | tail -n 1)"
+          echo "STORE_IP=$store_ip" >> "$GITHUB_ENV"
       - name: Build images and load them into the cluster
         run: |
           docker build -t "trader-churn:$TAG" .
@@ -89,12 +98,19 @@ jobs:
         run: |
           kubectl create namespace "$NAMESPACE"
           kubectl label namespace "$NAMESPACE" pod-security.kubernetes.io/enforce=restricted
+          kubectl create secret generic trader-churn-aws --namespace "$NAMESPACE" \
+            --from-literal=AWS_ACCESS_KEY_ID=test \
+            --from-literal=AWS_SECRET_ACCESS_KEY=test
       - name: Deploy the chart
         run: |
           helm install trader-churn charts/trader-churn \
             --namespace "$NAMESPACE" \
             --set "api.image.tag=$TAG" \
             --set "training.image.tag=$TAG" \
+            --set "modelStore.endpoint=http://$STORE_IP:4566" \
+            --set "modelStore.credentialsSecret=trader-churn-aws" \
+            --set "modelStore.egressCidr=$STORE_IP/32" \
+            --set "modelStore.egressPort=4566" \
             --wait --wait-for-jobs --timeout 5m
       - name: Ask the deployed API for a prediction
         run: helm test trader-churn --namespace "$NAMESPACE" --logs
