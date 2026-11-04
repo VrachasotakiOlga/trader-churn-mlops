@@ -15,6 +15,12 @@ models/
 mlflow.db
 mlruns/
 
+# Terraform: state and downloaded providers (the lock file is versioned)
+.terraform/
+*.tfstate
+*.tfstate.*
+infra/.build/
+
 # Personal study notes
 docs/
 
