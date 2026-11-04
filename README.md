@@ -12,4 +12,5 @@ You need [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync                                  # install dependencies
 uv run ruff check .                      # check code quality
+uv run python -m churn.data              # write data/clients.csv
 ```

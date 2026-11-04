@@ -6,7 +6,13 @@ Each row is one client, described by their last 30 days of behaviour. The label
 The data is made up, which gives us something real data cannot: the `drift`
 setting changes client behaviour on demand, so later steps can test whether the
 monitoring notices.
+
+Run it with:
+    uv run python -m churn.data --clients 20000 --output data/clients.csv
 """
+
+import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -107,3 +113,24 @@ def generate_clients(
             TARGET_COLUMN: churned,
         }
     )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate synthetic broker clients.")
+    parser.add_argument("--clients", type=int, default=20_000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--drift", type=float, default=0.0)
+    parser.add_argument("--output", type=Path, default=Path("data/clients.csv"))
+    args = parser.parse_args()
+
+    clients = generate_clients(args.clients, args.seed, args.drift)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    clients.to_csv(args.output, index=False)
+    print(
+        f"Wrote {len(clients)} clients to {args.output} "
+        f"(churn rate: {clients[TARGET_COLUMN].mean():.1%})"
+    )
+
+
+if __name__ == "__main__":
+    main()
