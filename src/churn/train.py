@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import joblib
+import mlflow
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier
@@ -28,6 +29,16 @@ NUMERIC_COLUMNS = [c for c in FEATURE_COLUMNS if c not in CATEGORICAL_COLUMNS]
 # Measured on five generated datasets: the model scored 0.82-0.84. A score below
 # 0.80 means something is wrong, so that model should never be used.
 MIN_ROC_AUC = 0.80
+
+EXPERIMENT_NAME = "trader-churn"
+
+# MLflow refuses to load tree models unless their tree type is trusted, because a
+# tampered file could crash the process or read memory it shouldn't. Trusting it
+# is safe here only because this code creates the file itself. Never extend this
+# to model files from somewhere else.
+TRUSTED_MODEL_TYPES = [
+    "sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor"
+]
 
 
 @dataclass
@@ -117,20 +128,58 @@ def check_quality(
     return failures
 
 
+def log_run(
+    result: TrainingResult,
+    clients: pd.DataFrame,
+    args: argparse.Namespace,
+    failures: list[str],
+) -> None:
+    """Record this run in MLflow, including runs that failed the quality gate."""
+    mlflow.set_tracking_uri(args.tracking_uri)
+    mlflow.set_experiment(EXPERIMENT_NAME)
+    with mlflow.start_run():
+        mlflow.log_params(
+            {
+                "seed": args.seed,
+                "n_clients": len(clients),
+                "min_roc_auc": args.min_roc_auc,
+                "classifier": type(result.model["classifier"]).__name__,
+            }
+        )
+        mlflow.log_metrics(result.metrics)
+        mlflow.log_metrics(
+            {
+                f"baseline_{name}": value
+                for name, value in result.baseline_metrics.items()
+            }
+        )
+        mlflow.set_tag("quality_gate", "failed" if failures else "passed")
+        if not failures:
+            mlflow.sklearn.log_model(
+                result.model,
+                name="model",
+                input_example=clients[FEATURE_COLUMNS].head(5),
+                skops_trusted_types=TRUSTED_MODEL_TYPES,
+            )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train the churn model.")
     parser.add_argument("--data", type=Path, default=Path("data/clients.csv"))
     parser.add_argument("--output", type=Path, default=Path("models/model.joblib"))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-roc-auc", type=float, default=MIN_ROC_AUC)
+    parser.add_argument("--tracking-uri", default="sqlite:///mlflow.db")
     args = parser.parse_args(argv)
 
-    result = train(pd.read_csv(args.data), args.seed)
+    clients = pd.read_csv(args.data)
+    result = train(clients, args.seed)
     print(f"Model:    {result.metrics}")
     print(f"Baseline: {result.baseline_metrics}")
 
     # A non-zero exit code makes the CI job fail, and the model is never saved.
     failures = check_quality(result.metrics, result.baseline_metrics, args.min_roc_auc)
+    log_run(result, clients, args, failures)
     if failures:
         print("Quality gate FAILED:")
         for failure in failures:

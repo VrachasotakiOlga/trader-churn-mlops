@@ -11,6 +11,10 @@ data/
 # Trained models: recreated by the training code
 models/
 
+# MLflow run history
+mlflow.db
+mlruns/
+
 # Personal study notes
 docs/
 

@@ -1,8 +1,21 @@
 import joblib
+import mlflow
 import pytest
 
 from churn.data import FEATURE_COLUMNS, generate_clients
-from churn.train import check_quality, main, train
+from churn.train import EXPERIMENT_NAME, check_quality, main, train
+
+
+@pytest.fixture(autouse=True)
+def isolated_mlflow(tmp_path, monkeypatch):
+    """Run from a temporary folder, so tests never touch the real MLflow data."""
+    monkeypatch.chdir(tmp_path)
+
+
+def finished_runs(tracking_uri):
+    client = mlflow.MlflowClient(tracking_uri)
+    experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
+    return client.search_runs([experiment.experiment_id])
 
 
 @pytest.fixture(scope="module")
@@ -88,3 +101,64 @@ def test_command_line_rejects_a_bad_model_and_does_not_save_it(tmp_path, clients
 
     assert exit_info.value.code == 1
     assert not model_path.exists()
+
+
+def test_passing_run_is_recorded_with_a_model_that_can_be_loaded(tmp_path):
+    clients = generate_clients(n_clients=20_000, seed=1)
+    data_path = tmp_path / "clients.csv"
+    model_path = tmp_path / "model.joblib"
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    clients.to_csv(data_path, index=False)
+
+    main(
+        [
+            "--data",
+            str(data_path),
+            "--output",
+            str(model_path),
+            "--seed",
+            "1",
+            "--tracking-uri",
+            tracking_uri,
+        ]
+    )
+
+    [run] = finished_runs(tracking_uri)
+    assert run.data.tags["quality_gate"] == "passed"
+    assert run.data.metrics["roc_auc"] > run.data.metrics["baseline_roc_auc"]
+    assert run.data.params["n_clients"] == "20000"
+
+    client = mlflow.MlflowClient(tracking_uri)
+    [logged_model] = client.search_logged_models([run.info.experiment_id])
+    loaded_model = mlflow.sklearn.load_model(logged_model.model_uri)
+    sample = clients[FEATURE_COLUMNS].head(50)
+    assert (
+        loaded_model.predict_proba(sample)
+        == joblib.load(model_path).predict_proba(sample)
+    ).all()
+
+
+def test_failing_run_is_recorded_without_a_model(tmp_path, clients):
+    data_path = tmp_path / "clients.csv"
+    tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    clients.to_csv(data_path, index=False)
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--data",
+                str(data_path),
+                "--output",
+                str(tmp_path / "model.joblib"),
+                "--min-roc-auc",
+                "0.99",
+                "--tracking-uri",
+                tracking_uri,
+            ]
+        )
+
+    [run] = finished_runs(tracking_uri)
+    assert run.data.tags["quality_gate"] == "failed"
+    assert not mlflow.MlflowClient(tracking_uri).search_logged_models(
+        [run.info.experiment_id]
+    )
