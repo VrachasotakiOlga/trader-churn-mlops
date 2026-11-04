@@ -3,7 +3,7 @@ import mlflow
 import pytest
 
 from churn.data import FEATURE_COLUMNS, generate_clients
-from churn.train import EXPERIMENT_NAME, check_quality, main, train
+from churn.train import EXPERIMENT_NAME, check_quality, evaluate, main, train
 
 
 @pytest.fixture(autouse=True)
@@ -163,3 +163,17 @@ def test_failing_run_is_recorded_without_a_model(tmp_path, clients):
     assert not mlflow.MlflowClient(tracking_uri).search_logged_models(
         [run.info.experiment_id]
     )
+
+
+def test_drift_makes_an_old_model_worse_and_retraining_helps():
+    old_model = train(generate_clients(n_clients=20_000, seed=1), seed=1).model
+    drifted = generate_clients(n_clients=20_000, seed=2, drift=1.0)
+    retrained = train(drifted, seed=2)
+    new_clients = generate_clients(n_clients=5_000, seed=3, drift=1.0)
+    features, labels = new_clients[FEATURE_COLUMNS], new_clients["churned"]
+
+    old_score = evaluate(old_model, features, labels)["roc_auc"]
+    new_score = evaluate(retrained.model, features, labels)["roc_auc"]
+
+    assert old_score < 0.65
+    assert new_score > old_score + 0.05

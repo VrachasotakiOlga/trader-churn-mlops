@@ -38,8 +38,8 @@ def generate_clients(
     Args:
         n_clients: How many clients to create.
         seed: The same seed always produces exactly the same data.
-        drift: How far behaviour has shifted, from 0.0 (normal) to 1.0 (a lot
-            less trading and depositing).
+        drift: How far behaviour has shifted, from 0.0 (normal) to 1.0 (a lot less
+            trading and depositing, and different reasons for leaving).
     """
     if n_clients < 1:
         raise ValueError(f"n_clients must be at least 1, got {n_clients}")
@@ -93,6 +93,11 @@ def generate_clients(
         + 0.10 * (withdrawals_30d > deposits_30d)
         - 0.10 * (trades_30d >= 20)
         - 0.05 * (deposits_30d >= 3)
+        # Drift also changes the rule itself. Say a competitor targets busy traders
+        # while a campaign wins back quiet ones: what the model learned stops being
+        # true, so its predictions get worse, not just its inputs.
+        + 0.45 * drift * (trades_30d >= 10)
+        - 0.30 * drift * (days_since_last_trade >= 14)
     )
     churn_probability = np.clip(churn_probability, 0.02, 0.90)
 
