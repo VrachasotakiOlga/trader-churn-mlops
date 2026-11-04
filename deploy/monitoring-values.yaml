@@ -36,6 +36,14 @@ prometheus:
 
 alertmanager:
   alertmanagerSpec:
+    # Use the routing rules our chart provides.
+    alertmanagerConfigSelector:
+      matchLabels:
+        app.kubernetes.io/name: trader-churn
+    alertmanagerConfigNamespaceSelector: {}
+    # Otherwise it only matches alerts labelled with our namespace, and ours aren't.
+    alertmanagerConfigMatcherStrategy:
+      type: None
     resources:
       requests:
         cpu: 20m

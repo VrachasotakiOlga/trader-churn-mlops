@@ -22,7 +22,8 @@ USER 1000
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HOME=/tmp
+    HOME=/tmp \
+    GIT_PYTHON_REFRESH=quiet
 
 WORKDIR /tmp
 CMD ["python", "-m", "churn.train", "--help"]

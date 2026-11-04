@@ -1,0 +1,184 @@
+{{- if .Values.retraining.enabled }}
+{{- $name := printf "%s-retrain-trigger" (include "trader-churn.fullname" .) }}
+# Unlike the API, this needs to talk to Kubernetes, so it has its own identity.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+---
+# Exactly what it needs, in this namespace only: read the retraining template, create
+# and list Jobs, and update the one API Deployment.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [cronjobs]
+    resourceNames: [{{ include "trader-churn.fullname" . }}-retrain]
+    verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [list, create]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ include "trader-churn.fullname" . }}-api]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retrain-trigger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: retrain-trigger
+  template:
+    metadata:
+      labels:
+        {{- include "trader-churn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: retrain-trigger
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        {{- include "trader-churn.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: trigger
+          # The training image, because it already contains the Kubernetes client.
+          image: {{ include "trader-churn.trainingImage" . | quote }}
+          imagePullPolicy: {{ .Values.training.image.pullPolicy }}
+          securityContext:
+            {{- include "trader-churn.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- include "trader-churn.modelStoreEnv" . | nindent 12 }}
+            - name: MODEL_BUCKET
+              value: {{ .Values.modelStore.bucket | quote }}
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CRON_JOB_NAME
+              value: {{ include "trader-churn.fullname" . }}-retrain
+            - name: DEPLOYMENT_NAME
+              value: {{ include "trader-churn.fullname" . }}-api
+            - name: COOLDOWN_SECONDS
+              value: {{ .Values.retraining.cooldownSeconds | int | quote }}
+          command:
+            - uvicorn
+            - churn.retrain_trigger:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.retraining.trigger.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: retrain-trigger
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: retrain-trigger
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if .Values.networkPolicy.enabled }}
+---
+# Only Alertmanager and approved pods can send it alerts, because each one can start
+# an expensive training run. It connects only to the model bucket and Kubernetes.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: retrain-trigger
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              trader-churn-api-access: "true"
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: http
+  egress:
+    {{- include "trader-churn.modelStoreEgress" . | nindent 4 }}
+    # The Kubernetes API. Its port depends on how the cluster was installed.
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 8443
+{{- end }}
+{{- end }}

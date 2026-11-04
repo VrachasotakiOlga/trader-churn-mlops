@@ -60,3 +60,22 @@ monitoring:
   namespace: monitoring
   # PSI above this is a large shift from the training data.
   driftAlertThreshold: 0.25
+
+# Retrain automatically when drift is detected.
+retraining:
+  enabled: true
+  # Don't retrain again within this time, however many alerts arrive.
+  cooldownSeconds: 900
+  # A floor only. The real test is beating the production model on new data.
+  minRocAuc: 0.6
+  # This project has no real new data, so retraining generates clients with this much
+  # drift. In production, this step would load recent clients with real outcomes.
+  simulatedDrift: 1.0
+  trigger:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

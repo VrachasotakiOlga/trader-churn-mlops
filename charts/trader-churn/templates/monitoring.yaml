@@ -51,6 +51,31 @@ spec:
             severity: warning
           annotations:
             summary: The slowest 5% of predictions take more than 500 ms
+{{- if .Values.retraining.enabled }}
+---
+# Send drift alerts to the retrain trigger.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-retrain
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  route:
+    receiver: retrain-trigger
+    groupBy: [alertname]
+    groupWait: 30s
+    groupInterval: 1m
+    repeatInterval: 30m
+    matchers:
+      - name: alertname
+        value: ChurnFeatureDrift
+  receivers:
+    - name: retrain-trigger
+      webhookConfigs:
+        - url: http://{{ include "trader-churn.fullname" . }}-retrain-trigger.{{ .Release.Namespace }}.svc:8080/alerts
+          sendResolved: false
+{{- end }}
 ---
 # Grafana loads any ConfigMap with this label as a dashboard.
 apiVersion: v1

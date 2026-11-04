@@ -29,6 +29,7 @@ read -r -d '' overrides <<JSON || true
         "allowPrivilegeEscalation": false,
         "capabilities": {"drop": ["ALL"]}
       },
+      "resources": {"limits": {"cpu": "500m", "memory": "512Mi"}},
       "command": ["python", "-c", $(python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))' <<PY
 import json, threading, time, urllib.request
 from churn.data import FEATURE_COLUMNS, generate_clients

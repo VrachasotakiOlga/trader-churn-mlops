@@ -1,0 +1,62 @@
+{{- if .Values.retraining.enabled }}
+# A template for retraining. "suspend" means the schedule never runs it: the retrain
+# trigger creates Jobs from it when an alert arrives.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-retrain
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: training
+spec:
+  suspend: true
+  schedule: "0 0 1 1 *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "trader-churn.labels" . | nindent 12 }}
+            app.kubernetes.io/component: training
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "trader-churn.fullname" . }}
+          securityContext:
+            {{- include "trader-churn.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: train
+              image: {{ include "trader-churn.trainingImage" . | quote }}
+              imagePullPolicy: {{ .Values.training.image.pullPolicy }}
+              securityContext:
+                {{- include "trader-churn.containerSecurityContext" . | nindent 16 }}
+              env:
+                {{- include "trader-churn.modelStoreEnv" . | nindent 16 }}
+                - name: MODEL_BUCKET
+                  value: {{ .Values.modelStore.bucket | quote }}
+                - name: CLIENTS
+                  value: {{ .Values.training.clients | int | quote }}
+                - name: DRIFT
+                  value: {{ .Values.retraining.simulatedDrift | quote }}
+                - name: MIN_ROC_AUC
+                  value: {{ .Values.retraining.minRocAuc | quote }}
+              # If the new model doesn't beat production, this fails, nothing is
+              # uploaded, and production stays as it is.
+              command:
+                - sh
+                - -ec
+                - |
+                  SEED="$(date +%s)"
+                  python -m churn.data --clients "$CLIENTS" --seed "$SEED" --drift "$DRIFT" --output /tmp/clients.csv
+                  python -m churn.train --seed "$SEED" --data /tmp/clients.csv --output /tmp/models/model.joblib --tracking-uri sqlite:////tmp/mlflow.db --s3-bucket "$MODEL_BUCKET" --min-roc-auc "$MIN_ROC_AUC" --compare-with-production
+              resources:
+                {{- toYaml .Values.training.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}

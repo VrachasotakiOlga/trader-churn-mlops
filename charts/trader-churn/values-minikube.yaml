@@ -1,3 +1,18 @@
 # Settings for the local cluster, on top of values.yaml.
 monitoring:
   enabled: true
+
+# minikube tells Kubernetes it has 8 CPUs, but it's limited to 4. With 6 API pods plus
+# training, the cluster's own API server and DNS ran out of CPU and restarted, so keep
+# the total within what's really there.
+autoscaling:
+  maxReplicas: 4
+
+training:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi

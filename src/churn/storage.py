@@ -4,8 +4,9 @@ Training uploads a candidate. The promotion Lambda then decides whether producti
 should point to it. The API only ever reads what the pointer names, and checks each
 file's checksum, because loading a tampered model file can run code.
 
-Fetch the production model with:
+Fetch the production model, or go back to the previous one, with:
     python -m churn.storage --bucket trader-churn-models --output models
+    python -m churn.storage --bucket trader-churn-models --rollback
 """
 
 import argparse
@@ -90,12 +91,48 @@ def download_production(bucket: str, output_dir: Path, wait_seconds: int = 0) ->
     return pointer
 
 
+def rollback(bucket: str) -> str:
+    """Point production back at the previous model, and return which that is."""
+    s3 = boto3.client("s3")
+    pointer = read_pointer(bucket)
+    if pointer is None or not pointer.get("previous"):
+        raise ValueError("there's no previous model to go back to")
+
+    previous = pointer["previous"]
+    body = s3.get_object(Bucket=bucket, Key=f"{previous}/metrics.json")["Body"].read()
+    summary = json.loads(body)
+    new_pointer = {
+        "candidate": previous,
+        "sha256": summary["sha256"],
+        "metrics": summary["metrics"],
+        "previous": pointer["candidate"],
+    }
+    s3.put_object(
+        Bucket=bucket,
+        Key=POINTER_KEY,
+        Body=json.dumps(new_pointer).encode(),
+        ContentType="application/json",
+    )
+    return previous
+
+
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Fetch the production model.")
+    parser = argparse.ArgumentParser(description="Fetch or roll back the model.")
     parser.add_argument("--bucket", required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--wait-seconds", type=int, default=0)
+    parser.add_argument("--rollback", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.rollback:
+        try:
+            print(f"Production now points to {rollback(args.bucket)}")
+        except ValueError as error:
+            sys.exit(f"Could not roll back: {error}")
+        return
+
+    if args.output is None:
+        parser.error("--output is required unless using --rollback")
 
     try:
         pointer = download_production(args.bucket, args.output, args.wait_seconds)

@@ -84,3 +84,26 @@ def test_command_line_exits_with_an_error_without_a_model(s3, tmp_path):
     with pytest.raises(SystemExit) as exit_info:
         storage.main(["--bucket", BUCKET, "--output", str(tmp_path / "x")])
     assert "No production model" in str(exit_info.value.code)
+
+
+def test_rollback_points_production_at_the_previous_model(s3, model_dir):
+    first = storage.upload_candidate(BUCKET, model_dir, {"roc_auc": 0.8})
+    second = storage.upload_candidate(BUCKET, model_dir, {"roc_auc": 0.9})
+    pointer = {"candidate": second, "sha256": {}, "previous": first}
+    s3.put_object(Bucket=BUCKET, Key=storage.POINTER_KEY, Body=json.dumps(pointer))
+
+    assert storage.rollback(BUCKET) == first
+
+    current = storage.read_pointer(BUCKET)
+    assert current["candidate"] == first
+    assert current["previous"] == second
+    assert current["metrics"] == {"roc_auc": 0.8}
+
+
+def test_rollback_refuses_without_a_previous_model(s3, model_dir):
+    candidate = storage.upload_candidate(BUCKET, model_dir, {"roc_auc": 0.8})
+    pointer = {"candidate": candidate, "sha256": {}, "previous": None}
+    s3.put_object(Bucket=BUCKET, Key=storage.POINTER_KEY, Body=json.dumps(pointer))
+
+    with pytest.raises(SystemExit):
+        storage.main(["--bucket", BUCKET, "--rollback"])
