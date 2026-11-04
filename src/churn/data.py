@@ -27,6 +27,8 @@ FEATURE_COLUMNS = [
     "deposits_30d",
     "withdrawals_30d",
 ]
+CATEGORICAL_COLUMNS = ["country", "account_type"]
+NUMERIC_COLUMNS = [c for c in FEATURE_COLUMNS if c not in CATEGORICAL_COLUMNS]
 TARGET_COLUMN = "churned"
 
 

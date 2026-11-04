@@ -5,9 +5,11 @@ Run it with:
     MODEL_PATH=models/model.joblib uv run uvicorn churn.serve:app --port 8000
 """
 
+import json
 import logging
 import os
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Self
@@ -15,13 +17,43 @@ from typing import Literal, Self
 import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request, Response, status
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from churn.data import FEATURE_COLUMNS
+from churn.drift import REFERENCE_FILENAME, DriftMonitor
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_PATH = "/models/model.joblib"
+
+# What Prometheus collects from /metrics.
+REQUESTS = Counter(
+    "churn_http_requests_total", "HTTP requests received", ["path", "status"]
+)
+PREDICTION_LATENCY = Histogram(
+    "churn_prediction_latency_seconds", "Time taken to produce a prediction"
+)
+PREDICTED_PROBABILITY = Histogram(
+    "churn_predicted_probability",
+    "Predicted churn probabilities",
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+)
+FEATURE_DRIFT = Gauge(
+    "churn_feature_drift_psi",
+    "How far recent inputs have moved from the training data (PSI)",
+    ["feature"],
+)
+DRIFT_SAMPLES = Gauge(
+    "churn_drift_window_samples", "Recent requests available for drift detection"
+)
+KNOWN_PATHS = {"/predict", "/healthz", "/readyz", "/metrics"}
 
 
 class Client(BaseModel):
@@ -58,6 +90,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     model_path = Path(os.environ.get("MODEL_PATH", DEFAULT_MODEL_PATH))
     app.state.model = None
+    app.state.drift_monitor = None
+    reference_path = model_path.with_name(REFERENCE_FILENAME)
+    if reference_path.exists():
+        app.state.drift_monitor = DriftMonitor(json.loads(reference_path.read_text()))
+    else:
+        logger.warning("No drift reference at %s", reference_path)
     if model_path.exists():
         app.state.model = joblib.load(model_path)
         logger.info("Loaded model from %s", model_path)
@@ -68,6 +106,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Trader Churn API", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def count_requests(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    response = await call_next(request)
+    # Unknown paths share one label, so bots scanning random URLs can't create
+    # unlimited metrics and exhaust Prometheus.
+    path = request.url.path if request.url.path in KNOWN_PATHS else "other"
+    REQUESTS.labels(path=path, status=response.status_code).inc()
+    return response
 
 
 @app.get("/healthz")
@@ -91,5 +141,23 @@ def predict(client: Client, request: Request) -> Prediction:
     if model is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Model not loaded")
 
+    start = time.perf_counter()
     features = pd.DataFrame([client.model_dump()])[FEATURE_COLUMNS]
-    return Prediction(churn_probability=float(model.predict_proba(features)[0, 1]))
+    probability = float(model.predict_proba(features)[0, 1])
+    PREDICTION_LATENCY.observe(time.perf_counter() - start)
+    PREDICTED_PROBABILITY.observe(probability)
+
+    if request.app.state.drift_monitor is not None:
+        request.app.state.drift_monitor.observe(client.model_dump())
+    return Prediction(churn_probability=probability)
+
+
+@app.get("/metrics")
+def metrics(request: Request) -> Response:
+    """Prometheus reads this every few seconds. Drift is calculated on demand."""
+    monitor = request.app.state.drift_monitor
+    if monitor is not None:
+        DRIFT_SAMPLES.set(monitor.sample_count())
+        for feature, score in monitor.scores().items():
+            FEATURE_DRIFT.labels(feature=feature).set(score)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

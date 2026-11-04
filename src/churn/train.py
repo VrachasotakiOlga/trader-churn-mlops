@@ -6,6 +6,7 @@ Run it with:
 """
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,10 +22,13 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from churn.data import FEATURE_COLUMNS, TARGET_COLUMN
-
-CATEGORICAL_COLUMNS = ["country", "account_type"]
-NUMERIC_COLUMNS = [c for c in FEATURE_COLUMNS if c not in CATEGORICAL_COLUMNS]
+from churn.data import (
+    CATEGORICAL_COLUMNS,
+    FEATURE_COLUMNS,
+    NUMERIC_COLUMNS,
+    TARGET_COLUMN,
+)
+from churn.drift import REFERENCE_FILENAME, build_reference
 
 # Measured on five generated datasets: the model scored 0.82-0.84. A score below
 # 0.80 means something is wrong, so that model should never be used.
@@ -188,6 +192,10 @@ def main(argv: list[str] | None = None) -> None:
     print("Quality gate passed")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    # Saved first, because the API treats the model file as "everything is ready".
+    reference_path = args.output.with_name(REFERENCE_FILENAME)
+    reference_path.write_text(json.dumps(build_reference(clients)))
+
     # Write under a temporary name, then rename, which happens all at once. An API
     # starting right now sees either no model or a whole one, never half a file.
     temporary_path = args.output.with_name(f"{args.output.name}.tmp")

@@ -1,8 +1,11 @@
+import json
+
 import joblib
 import pytest
 from fastapi.testclient import TestClient
 
 from churn.data import FEATURE_COLUMNS, generate_clients
+from churn.drift import build_reference
 from churn.serve import Client, app
 from churn.train import build_model
 
@@ -32,6 +35,7 @@ def model_file(tmp_path_factory):
     model = build_model(seed=1).fit(clients[FEATURE_COLUMNS], clients["churned"])
     path = tmp_path_factory.mktemp("models") / "model.joblib"
     joblib.dump(model, path)
+    (path.parent / "reference.json").write_text(json.dumps(build_reference(clients)))
     return path
 
 
@@ -101,3 +105,43 @@ def test_without_a_model_it_is_alive_but_not_ready(api_without_model):
     assert api_without_model.get("/healthz").status_code == 200
     assert api_without_model.get("/readyz").status_code == 503
     assert api_without_model.post("/predict", json=ACTIVE_CLIENT).status_code == 503
+
+
+def metric_value(metrics_text, name):
+    for line in metrics_text.splitlines():
+        if line.startswith(name + " "):
+            return float(line.split()[-1])
+    return None
+
+
+def test_metrics_count_predictions(api):
+    name = 'churn_http_requests_total{path="/predict",status="200"}'
+    before = metric_value(api.get("/metrics").text, name) or 0
+    api.post("/predict", json=ACTIVE_CLIENT)
+    assert metric_value(api.get("/metrics").text, name) == before + 1
+
+
+def test_unknown_paths_share_one_metric_label(api):
+    api.get("/some/random/path")
+    text = api.get("/metrics").text
+    assert 'path="other"' in text
+    assert "random" not in text
+
+
+def test_drifted_traffic_raises_the_drift_metric(api):
+    clients = generate_clients(n_clients=300, seed=5, drift=1.0)
+    for client in clients[FEATURE_COLUMNS].to_dict("records"):
+        assert api.post("/predict", json=client).status_code == 200
+
+    text = api.get("/metrics").text
+    assert metric_value(text, "churn_drift_window_samples") == 300
+    assert metric_value(text, 'churn_feature_drift_psi{feature="trades_30d"}') > 0.25
+
+
+def test_api_works_without_a_drift_reference(tmp_path, model_file, monkeypatch):
+    copied_model = tmp_path / "model.joblib"
+    copied_model.write_bytes(model_file.read_bytes())
+    monkeypatch.setenv("MODEL_PATH", str(copied_model))
+    with TestClient(app) as test_client:
+        assert test_client.post("/predict", json=ACTIVE_CLIENT).status_code == 200
+        assert test_client.get("/metrics").status_code == 200
