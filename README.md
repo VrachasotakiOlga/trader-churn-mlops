@@ -1,5 +1,7 @@
 # Trader Churn MLOps
 
+[![CI](https://github.com/VrachasotakiOlga/trader-churn-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/VrachasotakiOlga/trader-churn-mlops/actions/workflows/ci.yml)
+
 Predicts which clients of a trading broker are likely to stop trading, built as
 an end-to-end MLOps project.
 
