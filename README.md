@@ -19,3 +19,15 @@ uv run python -m churn.data              # write data/clients.csv
 uv run python -m churn.train             # train the model and save it if it passes
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db   # compare training runs
 ```
+
+## Run the API in Docker
+
+Train a model first, then:
+
+```bash
+docker build -t trader-churn .
+scripts/smoke_test_image.sh trader-churn models     # check the image works
+docker run --rm -p 8000:8000 -v "$PWD/models:/models:ro" trader-churn
+```
+
+The API documentation is then at http://localhost:8000/docs.

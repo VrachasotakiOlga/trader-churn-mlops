@@ -1,0 +1,8 @@
+# Ignore everything, then allow only what the image needs. This keeps notes, data,
+# models and anything secret out of the image, even if new files appear later.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!README.md
+!src/
