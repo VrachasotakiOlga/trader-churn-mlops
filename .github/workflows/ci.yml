@@ -76,6 +76,7 @@ jobs:
         with:
           version: v4.3.1
       - run: helm lint charts/trader-churn
+      - run: helm lint charts/trader-churn --values charts/trader-churn/values-minikube.yaml
       - uses: helm/kind-action@v1.15.2
         with:
           cluster_name: ci

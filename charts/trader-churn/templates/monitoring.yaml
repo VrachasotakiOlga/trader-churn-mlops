@@ -1,0 +1,66 @@
+{{- if .Values.monitoring.enabled }}
+# Tells Prometheus where to find the API's metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-api
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "trader-churn.apiSelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+# The conditions Prometheus checks. "for" means it must stay true that long, so a
+# short blip doesn't raise an alert.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-alerts
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: trader-churn
+      rules:
+        - alert: ChurnFeatureDrift
+          expr: max by (feature) (churn_feature_drift_psi) > {{ .Values.monitoring.driftAlertThreshold }}
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Feature {{ "{{ $labels.feature }}" }} has drifted (PSI {{ "{{ $value | printf \"%.2f\" }}" }})'
+            description: Recent requests no longer look like the training data, so the model may be getting worse.
+        - alert: ChurnHighErrorRate
+          expr: |
+            sum(rate(churn_http_requests_total{path="/predict",status=~"5.."}[5m]))
+              / sum(rate(churn_http_requests_total{path="/predict"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: More than 5% of predictions are failing
+        - alert: ChurnHighLatency
+          expr: histogram_quantile(0.95, sum by (le) (rate(churn_prediction_latency_seconds_bucket[5m]))) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: The slowest 5% of predictions take more than 500 ms
+---
+# Grafana loads any ConfigMap with this label as a dashboard.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-dashboard
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  trader-churn.json: |-
+    {{- .Files.Get "dashboards/trader-churn.json" | nindent 4 }}
+{{- end }}

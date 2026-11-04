@@ -29,6 +29,7 @@ echo "Deploying..."
 helm upgrade --install trader-churn charts/trader-churn \
   --kube-context "$context" \
   --namespace "$namespace" \
+  --values charts/trader-churn/values-minikube.yaml \
   --set "api.image.tag=$tag" \
   --set "training.image.tag=$tag" \
   --wait --wait-for-jobs --timeout 5m

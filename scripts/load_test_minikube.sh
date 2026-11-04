@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Send traffic to the API from inside the cluster and report the failures.
-# Usage: scripts/load_test_minikube.sh [seconds] [parallel workers]
+# Send realistic traffic to the API from inside the cluster and report the failures.
+# Usage: scripts/load_test_minikube.sh [seconds] [parallel workers] [drift, 0.0 to 1.0]
 set -euo pipefail
 
 seconds="${1:-120}"
 workers="${2:-8}"
+drift="${3:-0.0}"
 context="trader-churn"
 namespace="trader-churn"
 kube=(kubectl --context "$context" --namespace "$namespace")
@@ -30,16 +31,19 @@ read -r -d '' overrides <<JSON || true
       },
       "command": ["python", "-c", $(python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))' <<PY
 import json, threading, time, urllib.request
+from churn.data import FEATURE_COLUMNS, generate_clients
 URL = "http://trader-churn-api/predict"
-BODY = json.dumps({"tenure_days": 400, "country": "Greece", "account_type": "standard",
-    "trades_30d": 40, "trades_7d": 10, "days_since_last_trade": 1,
-    "deposits_30d": 4, "withdrawals_30d": 0}).encode()
+clients = generate_clients(5000, seed=int(time.time()), drift=$drift)[FEATURE_COLUMNS]
+bodies = [json.dumps(client).encode() for client in clients.to_dict("records")]
 end = time.time() + $seconds
 counts = {"ok": 0, "failed": 0}
 lock = threading.Lock()
-def work():
+def work(start):
+    position = start
     while time.time() < end:
-        request = urllib.request.Request(URL, BODY, {"Content-Type": "application/json"})
+        position += 1
+        body = bodies[position % len(bodies)]
+        request = urllib.request.Request(URL, body, {"Content-Type": "application/json"})
         try:
             urllib.request.urlopen(request, timeout=5).read()
             result = "ok"
@@ -48,7 +52,7 @@ def work():
             print("error:", error, flush=True)
         with lock:
             counts[result] += 1
-threads = [threading.Thread(target=work) for _ in range($workers)]
+threads = [threading.Thread(target=work, args=(n * 500,)) for n in range($workers)]
 [t.start() for t in threads]
 [t.join() for t in threads]
 print("RESULT", counts, flush=True)
@@ -63,7 +67,7 @@ JSON
 "${kube[@]}" run load-test --image="$image" --restart=Never \
   --labels="trader-churn-api-access=true" --overrides="$overrides" >/dev/null
 "${kube[@]}" wait --for=condition=Ready pod/load-test --timeout=60s >/dev/null
-echo "Sending traffic for $seconds seconds with $workers workers..."
+echo "Sending traffic for $seconds seconds with $workers workers (drift $drift)..."
 "${kube[@]}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/load-test \
   --timeout="$((seconds + 60))s" >/dev/null
 "${kube[@]}" logs load-test | tail -n 15

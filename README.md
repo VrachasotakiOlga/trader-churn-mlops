@@ -50,3 +50,15 @@ To send traffic and watch it scale:
 scripts/load_test_minikube.sh 120 8
 kubectl --context trader-churn -n trader-churn get hpa --watch
 ```
+
+## Monitoring
+
+```bash
+scripts/install_monitoring.sh                  # Prometheus, Alertmanager and Grafana
+scripts/deploy_minikube.sh                     # adds the metrics, alerts and dashboard
+scripts/load_test_minikube.sh 120 6 1.0        # send traffic with full drift
+```
+
+The API reports how far recent requests have moved from the training data, using the
+Population Stability Index. When a feature stays above 0.25 for a minute, the
+`ChurnFeatureDrift` alert fires.

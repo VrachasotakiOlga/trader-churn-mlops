@@ -1,0 +1,3 @@
+# Settings for the local cluster, on top of values.yaml.
+monitoring:
+  enabled: true

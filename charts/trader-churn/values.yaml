@@ -44,3 +44,11 @@ autoscaling:
 
 networkPolicy:
   enabled: true
+
+# Needs the Prometheus Operator installed first (see scripts/install_monitoring.sh).
+monitoring:
+  enabled: false
+  # Prometheus lives here, and the NetworkPolicy lets it read /metrics.
+  namespace: monitoring
+  # PSI above this is a large shift from the training data.
+  driftAlertThreshold: 0.25
