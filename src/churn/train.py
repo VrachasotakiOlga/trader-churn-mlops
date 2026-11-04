@@ -29,11 +29,19 @@ from churn.data import (
     TARGET_COLUMN,
 )
 from churn.drift import REFERENCE_FILENAME, build_reference
-from churn.storage import read_pointer, upload_candidate
+from churn.storage import (
+    MODEL_FILENAME,
+    download_production,
+    read_pointer,
+    upload_candidate,
+)
 
 # Measured on five generated datasets: the model scored 0.82-0.84. A score below
 # 0.80 means something is wrong, so that model should never be used.
 MIN_ROC_AUC = 0.80
+
+# A replacement must clearly beat the production model, not just match it by chance.
+MIN_IMPROVEMENT = 0.01
 
 EXPERIMENT_NAME = "trader-churn"
 
@@ -51,6 +59,8 @@ class TrainingResult:
     model: Pipeline
     metrics: dict[str, float]
     baseline_metrics: dict[str, float]
+    # The production model's score on the same new data, if there is one.
+    champion_metrics: dict[str, float] | None = None
 
 
 def build_preprocessor() -> ColumnTransformer:
@@ -97,8 +107,14 @@ def evaluate(model: Pipeline, features: pd.DataFrame, labels: pd.Series) -> dict
     }
 
 
-def train(clients: pd.DataFrame, seed: int = 42) -> TrainingResult:
-    """Fit both models on 80% of the data and score them on the other 20%."""
+def train(
+    clients: pd.DataFrame, seed: int = 42, champion: Pipeline | None = None
+) -> TrainingResult:
+    """Fit both models on 80% of the data and score them on the other 20%.
+
+    If a production model is given, it's scored on the same 20%, so the comparison
+    is fair: both models are judged on the newest data, which neither has seen.
+    """
     train_features, test_features, train_labels, test_labels = train_test_split(
         clients[FEATURE_COLUMNS],
         clients[TARGET_COLUMN],
@@ -115,11 +131,17 @@ def train(clients: pd.DataFrame, seed: int = 42) -> TrainingResult:
         model=model,
         metrics=evaluate(model, test_features, test_labels),
         baseline_metrics=evaluate(baseline, test_features, test_labels),
+        champion_metrics=(
+            evaluate(champion, test_features, test_labels) if champion else None
+        ),
     )
 
 
 def check_quality(
-    metrics: dict, baseline_metrics: dict, min_roc_auc: float = MIN_ROC_AUC
+    metrics: dict,
+    baseline_metrics: dict,
+    min_roc_auc: float = MIN_ROC_AUC,
+    champion_metrics: dict | None = None,
 ) -> list[str]:
     """Return the reasons a model should be rejected. An empty list means it passed."""
     failures = []
@@ -129,6 +151,14 @@ def check_quality(
         failures.append(
             f"ROC AUC {metrics['roc_auc']:.3f} doesn't beat the baseline "
             f"({baseline_metrics['roc_auc']:.3f})"
+        )
+    if (
+        champion_metrics is not None
+        and metrics["roc_auc"] < champion_metrics["roc_auc"] + MIN_IMPROVEMENT
+    ):
+        failures.append(
+            f"ROC AUC {metrics['roc_auc']:.3f} doesn't beat the production model "
+            f"({champion_metrics['roc_auc']:.3f}) by {MIN_IMPROVEMENT}"
         )
     return failures
 
@@ -158,6 +188,13 @@ def log_run(
                 for name, value in result.baseline_metrics.items()
             }
         )
+        if result.champion_metrics:
+            mlflow.log_metrics(
+                {
+                    f"champion_{name}": value
+                    for name, value in result.champion_metrics.items()
+                }
+            )
         mlflow.set_tag("quality_gate", "failed" if failures else "passed")
         if not failures:
             mlflow.sklearn.log_model(
@@ -181,6 +218,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Do nothing if the bucket already has a production model",
     )
+    parser.add_argument(
+        "--compare-with-production",
+        action="store_true",
+        help="Only accept a model that beats the current production model",
+    )
     args = parser.parse_args(argv)
 
     # Deploying a new version of the code shouldn't replace the model.
@@ -189,12 +231,26 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     clients = pd.read_csv(args.data)
-    result = train(clients, args.seed)
+    champion = None
+    if args.compare_with_production and read_pointer(args.s3_bucket) is not None:
+        # The download checks the checksums, which makes it safe to load.
+        champion_dir = args.output.parent / "champion"
+        download_production(args.s3_bucket, champion_dir)
+        champion = joblib.load(champion_dir / MODEL_FILENAME)
+
+    result = train(clients, args.seed, champion)
     print(f"Model:    {result.metrics}")
     print(f"Baseline: {result.baseline_metrics}")
+    if result.champion_metrics:
+        print(f"Current production model: {result.champion_metrics}")
 
     # A non-zero exit code makes the CI job fail, and the model is never saved.
-    failures = check_quality(result.metrics, result.baseline_metrics, args.min_roc_auc)
+    failures = check_quality(
+        result.metrics,
+        result.baseline_metrics,
+        args.min_roc_auc,
+        result.champion_metrics,
+    )
     log_run(result, clients, args, failures)
     if failures:
         print("Quality gate FAILED:")

@@ -1,3 +1,5 @@
+import json
+
 import boto3
 import joblib
 import mlflow
@@ -83,6 +85,27 @@ def test_model_that_does_not_beat_the_baseline_fails_the_gate(baseline_roc_auc):
     )
     assert len(failures) == 1
     assert "baseline" in failures[0]
+
+
+def test_model_that_does_not_beat_production_fails_the_gate():
+    failures = check_quality(
+        {"roc_auc": 0.85},
+        {"roc_auc": 0.80},
+        min_roc_auc=0.80,
+        champion_metrics={"roc_auc": 0.845},
+    )
+    assert len(failures) == 1
+    assert "production" in failures[0]
+
+
+def test_model_that_clearly_beats_production_passes_the_gate():
+    failures = check_quality(
+        {"roc_auc": 0.70},
+        {"roc_auc": 0.65},
+        min_roc_auc=0.60,
+        champion_metrics={"roc_auc": 0.55},
+    )
+    assert failures == []
 
 
 def test_command_line_rejects_a_bad_model_and_does_not_save_it(tmp_path, clients):
@@ -216,3 +239,67 @@ def test_training_uploads_a_candidate_then_skips_once_production_exists(
         main(arguments)
         uploaded = [o["Key"] for o in s3.list_objects_v2(Bucket="models")["Contents"]]
         assert sum(key.endswith("metrics.json") for key in uploaded) == 1
+
+
+def s3_training_run(tmp_path, seed, drift, *extra_arguments):
+    data_path = tmp_path / "clients.csv"
+    generate_clients(n_clients=20_000, seed=seed, drift=drift).to_csv(
+        data_path, index=False
+    )
+    main(
+        [
+            "--data",
+            str(data_path),
+            "--output",
+            str(tmp_path / "out" / "model.joblib"),
+            "--seed",
+            str(seed),
+            "--s3-bucket",
+            "models",
+            "--tracking-uri",
+            f"sqlite:///{tmp_path / 'mlflow.db'}",
+            "--min-roc-auc",
+            "0.6",
+            "--compare-with-production",
+            *extra_arguments,
+        ]
+    )
+
+
+def promote_latest(s3):
+    """Do what the Lambda does."""
+    objects = s3.list_objects_v2(Bucket="models", Prefix="candidates/")["Contents"]
+    newest = max(
+        (o for o in objects if o["Key"].endswith("metrics.json")),
+        key=lambda o: o["LastModified"],
+    )
+    body = s3.get_object(Bucket="models", Key=newest["Key"])["Body"].read()
+    pointer = {
+        "candidate": newest["Key"].rsplit("/", 1)[0],
+        "sha256": json.loads(body)["sha256"],
+    }
+    s3.put_object(Bucket="models", Key=storage.POINTER_KEY, Body=json.dumps(pointer))
+    return pointer["candidate"]
+
+
+def test_retraining_replaces_production_only_when_it_is_better(tmp_path, monkeypatch):
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+
+    with mock_aws():
+        s3 = boto3.client("s3")
+        s3.create_bucket(Bucket="models")
+
+        # The first model has nothing to beat.
+        s3_training_run(tmp_path, seed=1, drift=0.0)
+        promote_latest(s3)
+
+        # Clients have changed, so a model trained on the new data is much better.
+        s3_training_run(tmp_path, seed=2, drift=1.0)
+        promote_latest(s3)
+
+        # Clients haven't changed since, so another model isn't clearly better.
+        with pytest.raises(SystemExit):
+            s3_training_run(tmp_path, seed=3, drift=1.0)
