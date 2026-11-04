@@ -65,3 +65,19 @@ scripts/load_test_minikube.sh 120 6 1.0        # send traffic with full drift
 The API reports how far recent requests have moved from the training data, using the
 Population Stability Index. When a feature stays above 0.25 for a minute, the
 `ChurnFeatureDrift` alert fires.
+
+## Automatic retraining
+
+When that alert fires, Alertmanager tells a small controller, which starts a retraining
+Job. The new model must beat the production model on the same new data. If it does, the
+Lambda promotes it, and the controller rolls it out to the API pods.
+
+```bash
+scripts/load_test_minikube.sh 300 3 1.0        # drifted traffic starts the whole loop
+scripts/test_retraining.sh trader-churn        # or test it with a fake alert
+
+# Go back to the previous model. The controller rolls it out by itself.
+AWS_ENDPOINT_URL=http://127.0.0.1:14566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+  AWS_DEFAULT_REGION=us-east-1 uv run python -m churn.storage \
+  --bucket trader-churn-models --rollback
+```

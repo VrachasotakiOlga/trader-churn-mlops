@@ -114,6 +114,8 @@ jobs:
             --wait --wait-for-jobs --timeout 5m
       - name: Ask the deployed API for a prediction
         run: helm test trader-churn --namespace "$NAMESPACE" --logs
+      - name: Check that a drift alert retrains and rolls out a new model
+        run: scripts/test_retraining.sh
       - name: Show what happened
         if: failure()
         run: |
