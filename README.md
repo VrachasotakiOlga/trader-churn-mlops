@@ -43,3 +43,10 @@ helm test trader-churn --kube-context trader-churn -n trader-churn --logs
 ```
 
 The API is only reachable from inside the cluster, because it has no authentication.
+
+To send traffic and watch it scale:
+
+```bash
+scripts/load_test_minikube.sh 120 8
+kubectl --context trader-churn -n trader-churn get hpa --watch
+```

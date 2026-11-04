@@ -62,3 +62,44 @@ jobs:
           path: models
       - run: docker build -t trader-churn .
       - run: scripts/smoke_test_image.sh trader-churn models
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TAG: ci
+      NAMESPACE: trader-churn
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5.0.1
+        with:
+          version: v4.3.1
+      - run: helm lint charts/trader-churn
+      - uses: helm/kind-action@v1.15.2
+        with:
+          cluster_name: ci
+      - name: Build images and load them into the cluster
+        run: |
+          docker build -t "trader-churn:$TAG" .
+          docker build -f Dockerfile.train -t "trader-churn-train:$TAG" .
+          kind load docker-image --name ci "trader-churn:$TAG" "trader-churn-train:$TAG"
+      - name: Create a namespace that enforces the restricted security standard
+        run: |
+          kubectl create namespace "$NAMESPACE"
+          kubectl label namespace "$NAMESPACE" pod-security.kubernetes.io/enforce=restricted
+      - name: Deploy the chart
+        run: |
+          helm install trader-churn charts/trader-churn \
+            --namespace "$NAMESPACE" \
+            --set "api.image.tag=$TAG" \
+            --set "training.image.tag=$TAG" \
+            --wait --wait-for-jobs --timeout 5m
+      - name: Ask the deployed API for a prediction
+        run: helm test trader-churn --namespace "$NAMESPACE" --logs
+      - name: Show what happened
+        if: failure()
+        run: |
+          kubectl get all,pvc,events --namespace "$NAMESPACE"
+          kubectl logs --namespace "$NAMESPACE" --all-containers --prefix \
+            --selector app.kubernetes.io/name=trader-churn --tail=50
