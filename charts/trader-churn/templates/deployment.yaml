@@ -60,6 +60,13 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+          # Removing a pod from the Service and stopping the pod happen at the same
+          # time, so requests can still arrive for a moment. Keep serving while the
+          # traffic moves away. Our load test failed 0.18% of requests without this.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           # Gives a slow start up to 60 seconds before the other two checks begin.
           startupProbe:
             httpGet:
