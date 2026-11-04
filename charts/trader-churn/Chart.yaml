@@ -1,0 +1,6 @@
+apiVersion: v2
+name: trader-churn
+description: Churn prediction API and the job that trains its model
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,36 @@
+# Every setting you might change between environments lives here.
+
+api:
+  image:
+    repository: trader-churn
+    # Empty means "use appVersion from Chart.yaml".
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+training:
+  image:
+    repository: trader-churn-train
+    tag: ""
+    pullPolicy: IfNotPresent
+  clients: 20000
+  seed: 42
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+storage:
+  size: 1Gi
+  # Empty means "use the cluster's default storage class".
+  storageClass: ""

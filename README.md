@@ -31,3 +31,15 @@ docker run --rm -p 8000:8000 -v "$PWD/models:/models:ro" trader-churn
 ```
 
 The API documentation is then at http://localhost:8000/docs.
+
+## Deploy to Kubernetes
+
+You need [minikube](https://minikube.sigs.k8s.io/) and [Helm](https://helm.sh/).
+
+```bash
+minikube start -p trader-churn --cni=calico --cpus=4 --memory=4g --addons=metrics-server
+scripts/deploy_minikube.sh
+helm test trader-churn --kube-context trader-churn -n trader-churn --logs
+```
+
+The API is only reachable from inside the cluster, because it has no authentication.

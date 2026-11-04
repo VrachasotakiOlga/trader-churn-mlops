@@ -1,0 +1,17 @@
+# A stable address that shares requests between the ready API pods. ClusterIP means
+# it's reachable only from inside the cluster, because the API has no login yet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-api
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "trader-churn.apiSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,51 @@
+# "helm test" runs this pod: it asks the deployed API for a real prediction.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-test-predict
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "trader-churn.fullname" . }}
+  securityContext:
+    {{- include "trader-churn.podSecurityContext" . | nindent 4 }}
+  containers:
+    - name: test
+      image: {{ include "trader-churn.apiImage" . | quote }}
+      imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+      securityContext:
+        {{- include "trader-churn.containerSecurityContext" . | nindent 8 }}
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      env:
+        - name: API_URL
+          value: http://{{ include "trader-churn.fullname" . }}-api/predict
+      command:
+        - python
+        - -c
+        - |
+          import json, os, urllib.request
+
+          client = {
+              "tenure_days": 400, "country": "Greece", "account_type": "standard",
+              "trades_30d": 40, "trades_7d": 10, "days_since_last_trade": 1,
+              "deposits_30d": 4, "withdrawals_30d": 0,
+          }
+          request = urllib.request.Request(
+              os.environ["API_URL"],
+              data=json.dumps(client).encode(),
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              probability = json.load(response)["churn_probability"]
+          assert 0 <= probability <= 1
+          print(f"OK: churn_probability={probability}")

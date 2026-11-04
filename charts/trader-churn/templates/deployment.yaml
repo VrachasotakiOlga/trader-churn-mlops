@@ -1,0 +1,94 @@
+# Keeps the API pods running, and replaces them gradually when something changes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-api
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Start one new pod before removing an old one, so capacity never drops.
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "trader-churn.apiSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "trader-churn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: {{ include "trader-churn.fullname" . }}
+      securityContext:
+        {{- include "trader-churn.podSecurityContext" . | nindent 8 }}
+      # The API loads the model only once, at startup, so wait until the training
+      # job has produced it.
+      initContainers:
+        - name: wait-for-model
+          image: {{ include "trader-churn.apiImage" . | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          securityContext:
+            {{- include "trader-churn.containerSecurityContext" . | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - until [ -f /models/model.joblib ]; do echo "Waiting for the model..."; sleep 3; done
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+      containers:
+        - name: api
+          image: {{ include "trader-churn.apiImage" . | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          securityContext:
+            {{- include "trader-churn.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: MODEL_PATH
+              value: /models/model.joblib
+          ports:
+            - name: http
+              containerPort: 8000
+          # Gives a slow start up to 60 seconds before the other two checks begin.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          # Failing means "restart this container".
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          # Failing means "stop sending this pod traffic".
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ include "trader-churn.fullname" . }}-models
+            readOnly: true
+        - name: tmp
+          emptyDir: {}

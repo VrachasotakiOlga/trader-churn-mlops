@@ -1,0 +1,54 @@
+# Runs once and stops. A Job can't be edited, so the revision number in its name makes
+# each "helm upgrade" start a new one. That also means each upgrade retrains the model.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-train-{{ .Release.Revision }}
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: training
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "trader-churn.labels" . | nindent 8 }}
+        app.kubernetes.io/component: training
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "trader-churn.fullname" . }}
+      securityContext:
+        {{- include "trader-churn.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: train
+          image: {{ include "trader-churn.trainingImage" . | quote }}
+          imagePullPolicy: {{ .Values.training.image.pullPolicy }}
+          securityContext:
+            {{- include "trader-churn.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: CLIENTS
+              value: {{ .Values.training.clients | int | quote }}
+            - name: SEED
+              value: {{ .Values.training.seed | int | quote }}
+          # If the quality gate fails, this exits with an error, the Job fails, and
+          # the model already in storage stays in place.
+          command:
+            - sh
+            - -c
+            - |
+              python -m churn.data --clients "$CLIENTS" --seed "$SEED" --output /tmp/clients.csv
+              python -m churn.train --seed "$SEED" --data /tmp/clients.csv --output /models/model.joblib --tracking-uri sqlite:////tmp/mlflow.db
+          resources:
+            {{- toYaml .Values.training.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ include "trader-churn.fullname" . }}-models
+        - name: tmp
+          emptyDir: {}

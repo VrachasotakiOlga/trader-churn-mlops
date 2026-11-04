@@ -1,0 +1,16 @@
+# Storage that outlives pods: the training job writes the model here, the API reads it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-models
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.storage.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}
