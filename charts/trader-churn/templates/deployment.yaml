@@ -30,24 +30,32 @@ spec:
       serviceAccountName: {{ include "trader-churn.fullname" . }}
       securityContext:
         {{- include "trader-churn.podSecurityContext" . | nindent 8 }}
-      # The API loads the model only once, at startup, so wait until the training
-      # job has produced it.
+      # The API loads the model only once, at startup, so download it first. If its
+      # checksum is wrong, this fails: the pod never starts, and the rollout stops
+      # with the old pods still serving.
       initContainers:
-        - name: wait-for-model
+        - name: fetch-model
           image: {{ include "trader-churn.apiImage" . | quote }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           securityContext:
             {{- include "trader-churn.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- include "trader-churn.modelStoreEnv" . | nindent 12 }}
           command:
-            - sh
-            - -c
-            - until [ -f /models/model.joblib ]; do echo "Waiting for the model..."; sleep 3; done
+            - python
+            - -m
+            - churn.storage
+            - --bucket
+            - {{ .Values.modelStore.bucket | quote }}
+            - --output
+            - /models
+            - --wait-seconds
+            - "300"
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
             - name: models
               mountPath: /models
-              readOnly: true
       containers:
         - name: api
           image: {{ include "trader-churn.apiImage" . | quote }}
@@ -97,9 +105,9 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        # Each pod has its own copy, so pods can run on different nodes.
         - name: models
-          persistentVolumeClaim:
-            claimName: {{ include "trader-churn.fullname" . }}-models
-            readOnly: true
+          emptyDir:
+            sizeLimit: 200Mi
         - name: tmp
           emptyDir: {}

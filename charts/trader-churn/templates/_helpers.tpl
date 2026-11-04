@@ -46,3 +46,45 @@ capabilities:
 {{- define "trader-churn.trainingImage" -}}
 {{ .Values.training.image.repository }}:{{ .Values.training.image.tag | default .Chart.AppVersion }}
 {{- end }}
+
+{{/* How pods reach the model bucket. */}}
+{{- define "trader-churn.modelStoreEnv" -}}
+- name: AWS_DEFAULT_REGION
+  value: {{ .Values.modelStore.region | quote }}
+{{- with .Values.modelStore.endpoint }}
+- name: AWS_ENDPOINT_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- with .Values.modelStore.credentialsSecret }}
+- name: AWS_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: AWS_ACCESS_KEY_ID
+- name: AWS_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: AWS_SECRET_ACCESS_KEY
+{{- end }}
+{{- end }}
+
+{{/* The only outgoing connections allowed: to the model bucket. */}}
+{{- define "trader-churn.modelStoreEgress" -}}
+{{- if .Values.modelStore.egressCidr }}
+- to:
+    - ipBlock:
+        cidr: {{ .Values.modelStore.egressCidr }}
+  ports:
+    - protocol: TCP
+      port: {{ .Values.modelStore.egressPort }}
+{{- else }}
+- ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+    - protocol: TCP
+      port: 443
+{{- end }}
+{{- end }}

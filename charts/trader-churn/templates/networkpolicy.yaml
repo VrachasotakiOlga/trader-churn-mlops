@@ -1,6 +1,6 @@
 {{- if .Values.networkPolicy.enabled }}
-# Only pods labelled trader-churn-api-access=true may call the API. It needs no
-# outgoing connections, so those are blocked too. Health checks from the node still work.
+# Only pods labelled trader-churn-api-access=true may call the API. Its only outgoing
+# connection is to the model bucket. Health checks from the node still work.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -29,8 +29,10 @@ spec:
       ports:
         - port: http
     {{- end }}
+  egress:
+    {{- include "trader-churn.modelStoreEgress" . | nindent 4 }}
 ---
-# Training uses only local files, so it needs no network at all.
+# Training's only connection is to the model bucket.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -45,4 +47,6 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+  egress:
+    {{- include "trader-churn.modelStoreEgress" . | nindent 4 }}
 {{- end }}

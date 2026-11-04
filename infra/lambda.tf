@@ -114,6 +114,7 @@ resource "aws_cloudwatch_metric_alarm" "promote_errors" {
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 1
+  datapoints_to_alarm = 1
   threshold           = 0
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"

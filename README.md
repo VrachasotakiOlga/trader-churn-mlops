@@ -34,7 +34,10 @@ The API documentation is then at http://localhost:8000/docs.
 
 ## Deploy to Kubernetes
 
-You need [minikube](https://minikube.sigs.k8s.io/) and [Helm](https://helm.sh/).
+You need [minikube](https://minikube.sigs.k8s.io/), [Helm](https://helm.sh/) and
+[Terraform](https://developer.hashicorp.com/terraform). The deploy script also creates
+the S3 bucket and Lambda on [MiniStack](https://ministack.org/), a local AWS emulator,
+so it needs no AWS account and costs nothing.
 
 ```bash
 minikube start -p trader-churn --cni=calico --cpus=4 --memory=4g --addons=metrics-server

@@ -30,10 +30,18 @@ training:
       cpu: "2"
       memory: 2Gi
 
-storage:
-  size: 1Gi
-  # Empty means "use the cluster's default storage class".
-  storageClass: ""
+# Where models are stored. On real AWS, leave endpoint and credentialsSecret empty and
+# give the pods' service account an IAM role instead (IRSA).
+modelStore:
+  bucket: trader-churn-models
+  region: us-east-1
+  # The address of an S3-compatible service, such as the MiniStack emulator.
+  endpoint: ""
+  # A Secret with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+  credentialsSecret: ""
+  # The only address pods may connect to. If empty, they may use DNS and any HTTPS.
+  egressCidr: ""
+  egressPort: 443
 
 autoscaling:
   enabled: true

@@ -1,5 +1,5 @@
-# Runs once and stops. A Job can't be edited, so the revision number in its name makes
-# each "helm upgrade" start a new one. That also means each upgrade retrains the model.
+# Trains the first model. A Job can't be edited, so the revision number in its name
+# makes each "helm upgrade" start a new one, which stops if a model already exists.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -27,28 +27,26 @@ spec:
           securityContext:
             {{- include "trader-churn.containerSecurityContext" . | nindent 12 }}
           env:
+            {{- include "trader-churn.modelStoreEnv" . | nindent 12 }}
+            - name: MODEL_BUCKET
+              value: {{ .Values.modelStore.bucket | quote }}
             - name: CLIENTS
               value: {{ .Values.training.clients | int | quote }}
             - name: SEED
               value: {{ .Values.training.seed | int | quote }}
           # If the quality gate fails, this exits with an error, the Job fails, and
-          # the model already in storage stays in place.
+          # nothing is uploaded.
           command:
             - sh
-            - -c
+            - -ec
             - |
               python -m churn.data --clients "$CLIENTS" --seed "$SEED" --output /tmp/clients.csv
-              python -m churn.train --seed "$SEED" --data /tmp/clients.csv --output /models/model.joblib --tracking-uri sqlite:////tmp/mlflow.db
+              python -m churn.train --seed "$SEED" --data /tmp/clients.csv --output /tmp/models/model.joblib --tracking-uri sqlite:////tmp/mlflow.db --s3-bucket "$MODEL_BUCKET" --skip-if-production-exists
           resources:
             {{- toYaml .Values.training.resources | nindent 12 }}
           volumeMounts:
-            - name: models
-              mountPath: /models
             - name: tmp
               mountPath: /tmp
       volumes:
-        - name: models
-          persistentVolumeClaim:
-            claimName: {{ include "trader-churn.fullname" . }}-models
         - name: tmp
           emptyDir: {}
