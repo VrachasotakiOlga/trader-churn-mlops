@@ -9,6 +9,8 @@ name="trader-churn-ministack"
 
 if [ "$(docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null)" != "true" ]; then
   docker rm --force "$name" >/dev/null 2>&1 || true
+  # A new emulator starts empty, so Terraform's record of the old one no longer applies.
+  rm -f infra/terraform.tfstate infra/terraform.tfstate.backup
   # Published on this machine only. The network lets the cluster reach it too.
   docker run --detach --name "$name" --network "$network" \
     --publish 127.0.0.1:14566:4566 \
