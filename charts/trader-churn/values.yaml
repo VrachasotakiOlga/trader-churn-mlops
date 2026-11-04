@@ -34,3 +34,13 @@ storage:
   size: 1Gi
   # Empty means "use the cluster's default storage class".
   storageClass: ""
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  # Add pods when average CPU goes above this share of the requested CPU.
+  targetCPUUtilizationPercentage: 70
+
+networkPolicy:
+  enabled: true

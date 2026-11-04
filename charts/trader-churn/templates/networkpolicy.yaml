@@ -1,0 +1,40 @@
+{{- if .Values.networkPolicy.enabled }}
+# Only pods labelled trader-churn-api-access=true may call the API. It needs no
+# outgoing connections, so those are blocked too. Health checks from the node still work.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-api
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "trader-churn.apiSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              trader-churn-api-access: "true"
+      ports:
+        - port: http
+---
+# Training uses only local files, so it needs no network at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-training
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: training
+  policyTypes:
+    - Ingress
+    - Egress
+{{- end }}

@@ -1,0 +1,13 @@
+# During planned work, such as replacing a node, always keep at least one pod running.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "trader-churn.fullname" . }}-api
+  labels:
+    {{- include "trader-churn.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "trader-churn.apiSelectorLabels" . | nindent 6 }}

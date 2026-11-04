@@ -7,7 +7,11 @@ metadata:
     {{- include "trader-churn.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
+  # With autoscaling on, the autoscaler decides. Setting replicas here too would make
+  # each deploy reset the number of pods.
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.api.replicas }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
