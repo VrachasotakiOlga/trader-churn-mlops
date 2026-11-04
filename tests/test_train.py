@@ -1,7 +1,10 @@
+import boto3
 import joblib
 import mlflow
 import pytest
+from moto import mock_aws
 
+from churn import storage
 from churn.data import FEATURE_COLUMNS, generate_clients
 from churn.train import EXPERIMENT_NAME, check_quality, evaluate, main, train
 
@@ -178,3 +181,38 @@ def test_drift_makes_an_old_model_worse_and_retraining_helps():
 
     assert old_score < 0.65
     assert new_score > old_score + 0.05
+
+
+def test_training_uploads_a_candidate_then_skips_once_production_exists(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    data_path = tmp_path / "clients.csv"
+    generate_clients(n_clients=20_000, seed=1).to_csv(data_path, index=False)
+    arguments = [
+        "--data",
+        str(data_path),
+        "--output",
+        str(tmp_path / "model.joblib"),
+        "--seed",
+        "1",
+        "--s3-bucket",
+        "models",
+        "--skip-if-production-exists",
+    ]
+
+    with mock_aws():
+        s3 = boto3.client("s3")
+        s3.create_bucket(Bucket="models")
+
+        main(arguments)
+        uploaded = [o["Key"] for o in s3.list_objects_v2(Bucket="models")["Contents"]]
+        assert sum(key.endswith("metrics.json") for key in uploaded) == 1
+
+        s3.put_object(Bucket="models", Key=storage.POINTER_KEY, Body=b"{}")
+        main(arguments)
+        uploaded = [o["Key"] for o in s3.list_objects_v2(Bucket="models")["Contents"]]
+        assert sum(key.endswith("metrics.json") for key in uploaded) == 1

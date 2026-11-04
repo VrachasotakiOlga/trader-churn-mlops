@@ -29,6 +29,7 @@ from churn.data import (
     TARGET_COLUMN,
 )
 from churn.drift import REFERENCE_FILENAME, build_reference
+from churn.storage import read_pointer, upload_candidate
 
 # Measured on five generated datasets: the model scored 0.82-0.84. A score below
 # 0.80 means something is wrong, so that model should never be used.
@@ -174,7 +175,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-roc-auc", type=float, default=MIN_ROC_AUC)
     parser.add_argument("--tracking-uri", default="sqlite:///mlflow.db")
+    parser.add_argument("--s3-bucket", help="Upload a passing model to this bucket")
+    parser.add_argument(
+        "--skip-if-production-exists",
+        action="store_true",
+        help="Do nothing if the bucket already has a production model",
+    )
     args = parser.parse_args(argv)
+
+    # Deploying a new version of the code shouldn't replace the model.
+    if args.skip_if_production_exists and read_pointer(args.s3_bucket) is not None:
+        print("A production model already exists, so there's nothing to do")
+        return
 
     clients = pd.read_csv(args.data)
     result = train(clients, args.seed)
@@ -202,6 +214,10 @@ def main(argv: list[str] | None = None) -> None:
     joblib.dump(result.model, temporary_path)
     temporary_path.replace(args.output)
     print(f"Saved model to {args.output}")
+
+    if args.s3_bucket:
+        candidate = upload_candidate(args.s3_bucket, args.output.parent, result.metrics)
+        print(f"Uploaded {candidate}")
 
 
 if __name__ == "__main__":
