@@ -1,0 +1,28 @@
+# The training image. It's separate from the API image because MLflow is large and
+# the API doesn't need it. See Dockerfile for what each part does.
+FROM python:3.12-slim AS build
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
+WORKDIR /app
+
+COPY pyproject.toml uv.lock .python-version README.md ./
+RUN uv sync --locked --no-dev --no-default-groups --group train --no-install-project
+
+COPY src ./src
+RUN uv sync --locked --no-dev --no-default-groups --group train --no-editable
+
+FROM python:3.12-slim
+WORKDIR /app
+COPY --from=build /app/.venv ./.venv
+
+RUN useradd --system --no-create-home --uid 1000 app
+USER 1000
+
+# HOME points to /tmp because some libraries write there, and the rest of the
+# filesystem is read-only when this runs in Kubernetes.
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/tmp
+
+WORKDIR /tmp
+CMD ["python", "-m", "churn.train", "--help"]

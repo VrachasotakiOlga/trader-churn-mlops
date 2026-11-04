@@ -188,7 +188,11 @@ def main(argv: list[str] | None = None) -> None:
     print("Quality gate passed")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(result.model, args.output)
+    # Write under a temporary name, then rename, which happens all at once. An API
+    # starting right now sees either no model or a whole one, never half a file.
+    temporary_path = args.output.with_name(f"{args.output.name}.tmp")
+    joblib.dump(result.model, temporary_path)
+    temporary_path.replace(args.output)
     print(f"Saved model to {args.output}")
 
 

@@ -59,6 +59,7 @@ def test_command_line_saves_a_model_that_can_be_loaded(tmp_path):
 
     saved_model = joblib.load(model_path)
     assert len(saved_model.predict_proba(clients[FEATURE_COLUMNS].head(3))) == 3
+    assert [path.name for path in tmp_path.glob("*.tmp")] == []
 
 
 def test_good_model_passes_the_gate():
