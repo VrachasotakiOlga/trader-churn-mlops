@@ -30,3 +30,16 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest
+
+  train:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run python -m churn.data
+      - run: uv run python -m churn.train

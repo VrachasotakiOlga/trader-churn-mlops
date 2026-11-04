@@ -16,4 +16,5 @@ uv sync                                  # install dependencies
 uv run pytest                            # run the tests
 uv run ruff check .                      # check code quality
 uv run python -m churn.data              # write data/clients.csv
+uv run python -m churn.train             # train the model and save it if it passes
 ```

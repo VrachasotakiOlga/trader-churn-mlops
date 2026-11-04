@@ -1,4 +1,4 @@
-"""Train the churn model and compare it with a simple baseline.
+"""Train the churn model and check it is good enough to use.
 
 Run it with:
     uv run python -m churn.data
@@ -6,6 +6,7 @@ Run it with:
 """
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,10 @@ from churn.data import FEATURE_COLUMNS, TARGET_COLUMN
 
 CATEGORICAL_COLUMNS = ["country", "account_type"]
 NUMERIC_COLUMNS = [c for c in FEATURE_COLUMNS if c not in CATEGORICAL_COLUMNS]
+
+# Measured on five generated datasets: the model scored 0.82-0.84. A score below
+# 0.80 means something is wrong, so that model should never be used.
+MIN_ROC_AUC = 0.80
 
 
 @dataclass
@@ -97,16 +102,41 @@ def train(clients: pd.DataFrame, seed: int = 42) -> TrainingResult:
     )
 
 
+def check_quality(
+    metrics: dict, baseline_metrics: dict, min_roc_auc: float = MIN_ROC_AUC
+) -> list[str]:
+    """Return the reasons a model should be rejected. An empty list means it passed."""
+    failures = []
+    if metrics["roc_auc"] < min_roc_auc:
+        failures.append(f"ROC AUC {metrics['roc_auc']:.3f} is below {min_roc_auc:.3f}")
+    if metrics["roc_auc"] <= baseline_metrics["roc_auc"]:
+        failures.append(
+            f"ROC AUC {metrics['roc_auc']:.3f} doesn't beat the baseline "
+            f"({baseline_metrics['roc_auc']:.3f})"
+        )
+    return failures
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train the churn model.")
     parser.add_argument("--data", type=Path, default=Path("data/clients.csv"))
     parser.add_argument("--output", type=Path, default=Path("models/model.joblib"))
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--min-roc-auc", type=float, default=MIN_ROC_AUC)
     args = parser.parse_args(argv)
 
     result = train(pd.read_csv(args.data), args.seed)
     print(f"Model:    {result.metrics}")
     print(f"Baseline: {result.baseline_metrics}")
+
+    # A non-zero exit code makes the CI job fail, and the model is never saved.
+    failures = check_quality(result.metrics, result.baseline_metrics, args.min_roc_auc)
+    if failures:
+        print("Quality gate FAILED:")
+        for failure in failures:
+            print(f"  - {failure}")
+        sys.exit(1)
+    print("Quality gate passed")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(result.model, args.output)
