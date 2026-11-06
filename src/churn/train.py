@@ -225,6 +225,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    # Both options look up the production model, which lives in the bucket. Without
+    # one, stop with a clear message instead of a confusing crash later on.
+    if (args.skip_if_production_exists or args.compare_with_production) and (
+        not args.s3_bucket
+    ):
+        parser.error(
+            "--skip-if-production-exists and --compare-with-production need --s3-bucket"
+        )
+
     # Deploying a new version of the code shouldn't replace the model.
     if args.skip_if_production_exists and read_pointer(args.s3_bucket) is not None:
         print("A production model already exists, so there's nothing to do")

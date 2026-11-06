@@ -68,6 +68,17 @@ def test_command_line_saves_a_model_that_can_be_loaded(tmp_path):
     assert (tmp_path / "reference.json").exists()
 
 
+@pytest.mark.parametrize(
+    "option", ["--skip-if-production-exists", "--compare-with-production"]
+)
+def test_production_options_without_a_bucket_give_a_clear_error(option, capsys):
+    # argparse stops the program with exit code 2 and explains what's wrong.
+    with pytest.raises(SystemExit) as stopped:
+        main([option])
+    assert stopped.value.code == 2
+    assert "need --s3-bucket" in capsys.readouterr().err
+
+
 def test_good_model_passes_the_gate():
     assert check_quality({"roc_auc": 0.85}, {"roc_auc": 0.80}, min_roc_auc=0.80) == []
 
